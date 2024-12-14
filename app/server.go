@@ -7,22 +7,62 @@ import (
 	"os"
 )
 
-func handleConnection(conn net.Conn) {
+type Request struct {
+	Size          uint32
+	CorrelationID uint32
+}
+
+type Response struct {
+	Size          uint32
+	CorrelationID uint32
+}
+
+func handleRequest(conn net.Conn) (*Request, error) {
+	buff := make([]byte, 1024)
+	_, err := conn.Read(buff)
+	if err != nil {
+		return nil, fmt.Errorf("Error reading from header: %w", err)
+	}
+
+	msgSize := binary.BigEndian.Uint32(buff[0:4])
+	cID := binary.BigEndian.Uint32(buff[8:12])
+
+	return &Request{
+		Size:          msgSize,
+		CorrelationID: cID,
+	}, nil
+}
+
+func generateResponse(conn net.Conn, res Response) {
+
+	resBytes := []byte{}
+
+	res.Size = 0
+	msgSizeBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(msgSizeBytes, res.Size)
+
+	cIDbytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(cIDbytes, res.CorrelationID)
+
+	resBytes = append(resBytes, msgSizeBytes...)
+	resBytes = append(resBytes, cIDbytes...)
+
+	conn.Write(resBytes)
+}
+
+func handleConnection(conn net.Conn) error {
 	defer conn.Close()
 
-	header := []byte{}
-	var msgSize uint32 = 0
-	msgSizeBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(msgSizeBytes, msgSize)
+	req, err := handleRequest(conn)
+	if err != nil {
+		return fmt.Errorf("Error on handleRequest: ", err)
+	}
 
-	var cID uint32 = 7
-	cIDbytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(cIDbytes, cID)
+	generateResponse(conn, Response{
+		CorrelationID: req.CorrelationID,
+	})
 
-	header = append(header, msgSizeBytes...)
-	header = append(header, cIDbytes...)
-
-	conn.Write(header)
+	return nil
 }
 
 func main() {
@@ -40,5 +80,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	handleConnection(conn)
+	err = handleConnection(conn)
+	if err != nil {
+		fmt.Println("Error accepting connection: ", err.Error())
+		os.Exit(1)
+	}
 }
